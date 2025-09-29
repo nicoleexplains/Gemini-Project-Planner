@@ -1,0 +1,5 @@
+{
+  "name": "Gemini Project Planner",
+  "description": "An AI-powered project management application to build project plans with task suggestions, Gantt chart visualization, and PDF export functionality.",
+  "requestFramePermissions": []
+}
