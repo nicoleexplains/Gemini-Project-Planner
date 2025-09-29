@@ -1,5 +1,6 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { BarChart, Bar, XAxis, YAxis, Tooltip, Legend, CartesianGrid, ResponsiveContainer } from 'recharts';
+
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, ResponsiveContainer } from 'recharts';
 import { Project, Task, Status } from '../types';
 
 interface GanttChartProps {
@@ -11,6 +12,7 @@ interface GanttChartProps {
 const statusColors: { [key in Status]: string } = {
   [Status.Done]: '#22c55e', // green-500
   [Status.InProgress]: '#3b82f6', // blue-500
+  [Status.Blocked]: '#f97316', // orange-500
   [Status.ToDo]: '#64748b', // slate-500
 };
 
@@ -34,10 +36,91 @@ interface DragState {
   originalEndDate: string;
 }
 
+const DependencyLines = ({ tasks, chartData, projectInfo, containerWidth, margin }) => {
+    if (!containerWidth || tasks.length === 0) return null;
+
+    const dayDifference = (date1Str, date2Str) => {
+        const date1 = new Date(date1Str);
+        const date2 = new Date(date2Str);
+        return Math.round((date2.getTime() - date1.getTime()) / (1000 * 3600 * 24));
+    };
+
+    const projectDuration = dayDifference(projectInfo.startDate, projectInfo.endDate);
+    if (projectDuration <= 0) return null;
+    
+    const chartHeight = tasks.length * 50 + 60;
+    const plotAreaWidth = containerWidth - margin.left - margin.right;
+    const plotAreaHeight = chartHeight - margin.top - margin.bottom;
+    const pixelsPerDay = plotAreaWidth / projectDuration;
+    const barSlotHeight = plotAreaHeight / tasks.length;
+    const barHeight = barSlotHeight * (1 - 0.35); // based on barCategoryGap="35%"
+
+    const taskPositions = new Map();
+    chartData.forEach((data, index) => {
+        const startDay = data.timeline[0];
+        const duration = data.timeline[1] - startDay;
+        taskPositions.set(data.id, {
+            x: margin.left + startDay * pixelsPerDay,
+            y: margin.top + index * barSlotHeight + (barSlotHeight - barHeight) / 2,
+            width: duration * pixelsPerDay,
+            height: barHeight,
+            cy: margin.top + index * barSlotHeight + barSlotHeight / 2,
+        });
+    });
+
+    const paths = [];
+    tasks.forEach(task => {
+        if (task.dependencies && task.dependencies.length > 0) {
+            const dependentPos = taskPositions.get(task.id);
+            if (!dependentPos) return;
+
+            task.dependencies.forEach(depId => {
+                const prereqPos = taskPositions.get(depId);
+                if (!prereqPos) return;
+
+                const startX = prereqPos.x + prereqPos.width;
+                const startY = prereqPos.cy;
+                const endX = dependentPos.x;
+                const endY = dependentPos.cy;
+                
+                const midX = startX + 15;
+
+                const pathD = `M ${startX} ${startY} L ${midX} ${startY} L ${midX} ${endY} L ${endX} ${endY}`;
+                paths.push(<path key={`${depId}-${task.id}`} d={pathD} stroke="#a78bfa" strokeWidth="2" fill="none" markerEnd="url(#arrow)" />);
+            });
+        }
+    });
+
+    return (
+        <svg id="dependency-overlay" style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', pointerEvents: 'none' }}>
+            <defs>
+                <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                    <path d="M 0 0 L 10 5 L 0 10 z" fill="#a78bfa" />
+                </marker>
+            </defs>
+            <g>{paths}</g>
+        </svg>
+    );
+};
+
+
 const GanttChart: React.FC<GanttChartProps> = ({ tasks, projectInfo, onUpdateTaskDates }) => {
   const [dragState, setDragState] = useState<DragState | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [containerWidth, setContainerWidth] = useState(0);
 
-  const dayDifference = useCallback((date1Str: string, date2Str: string) => {
+  useEffect(() => {
+    if (!containerRef.current) return;
+    const resizeObserver = new ResizeObserver(entries => {
+      for (let entry of entries) {
+        setContainerWidth(entry.contentRect.width);
+      }
+    });
+    resizeObserver.observe(containerRef.current);
+    return () => resizeObserver.disconnect();
+  }, []);
+
+  const dayDifference = useCallback((date1Str: string, date2Str:string): number => {
     const date1 = new Date(date1Str);
     const date2 = new Date(date2Str);
     return Math.round((date2.getTime() - date1.getTime()) / (1000 * 3600 * 24));
@@ -54,7 +137,7 @@ const GanttChart: React.FC<GanttChartProps> = ({ tasks, projectInfo, onUpdateTas
       startDate: task.startDate,
       endDate: task.endDate,
     };
-  }).sort((a, b) => a.timeline[0] - b.timeline[0]), [tasks, projectInfo, dayDifference]);
+  }).sort((a, b) => a.timeline[0] - b.timeline[0] || dayDifference(a.startDate, b.startDate)), [tasks, projectInfo, dayDifference]);
 
   const projectDuration = dayDifference(projectInfo.startDate, projectInfo.endDate);
 
@@ -66,28 +149,30 @@ const GanttChart: React.FC<GanttChartProps> = ({ tasks, projectInfo, onUpdateTas
     const handleMouseUp = (e: MouseEvent) => {
       if (dragState) {
         const { taskId, action, initialMouseX, pixelsPerDay, originalStartDate, originalEndDate } = dragState;
-        const deltaX = e.clientX - initialMouseX;
-        const deltaDays = Math.round(deltaX / pixelsPerDay);
+        if(pixelsPerDay > 0) {
+            const deltaX = e.clientX - initialMouseX;
+            const deltaDays = Math.round(deltaX / pixelsPerDay);
 
-        if (deltaDays !== 0) {
-          let newStartDate = originalStartDate;
-          let newEndDate = originalEndDate;
+            if (deltaDays !== 0) {
+              let newStartDate = originalStartDate;
+              let newEndDate = originalEndDate;
 
-          if (action === 'move') {
-            newStartDate = addDaysToDate(originalStartDate, deltaDays);
-            newEndDate = addDaysToDate(originalEndDate, deltaDays);
-          } else if (action === 'resize-end') {
-            newEndDate = addDaysToDate(originalEndDate, deltaDays);
-            if (new Date(newEndDate) < new Date(newStartDate)) {
-              newEndDate = newStartDate;
+              if (action === 'move') {
+                newStartDate = addDaysToDate(originalStartDate, deltaDays);
+                newEndDate = addDaysToDate(originalEndDate, deltaDays);
+              } else if (action === 'resize-end') {
+                newEndDate = addDaysToDate(originalEndDate, deltaDays);
+                if (new Date(newEndDate) < new Date(newStartDate)) {
+                  newEndDate = newStartDate;
+                }
+              } else if (action === 'resize-start') {
+                newStartDate = addDaysToDate(originalStartDate, deltaDays);
+                if (new Date(newStartDate) > new Date(newEndDate)) {
+                  newStartDate = newEndDate;
+                }
+              }
+              onUpdateTaskDates(taskId, newStartDate, newEndDate);
             }
-          } else if (action === 'resize-start') {
-            newStartDate = addDaysToDate(originalStartDate, deltaDays);
-            if (new Date(newStartDate) > new Date(newEndDate)) {
-              newStartDate = newEndDate;
-            }
-          }
-          onUpdateTaskDates(taskId, newStartDate, newEndDate);
         }
         setDragState(null);
       }
@@ -134,9 +219,9 @@ const GanttChart: React.FC<GanttChartProps> = ({ tasks, projectInfo, onUpdateTas
       if (dragState.action === 'move') {
         displayX += deltaX;
       } else if (dragState.action === 'resize-end') {
-        displayWidth = Math.max(dragState.pixelsPerDay, dragState.originalWidth + deltaX);
+        displayWidth = Math.max(dragState.pixelsPerDay > 0 ? dragState.pixelsPerDay : 1, dragState.originalWidth + deltaX);
       } else if (dragState.action === 'resize-start') {
-        const newWidth = Math.max(dragState.pixelsPerDay, dragState.originalWidth - deltaX);
+        const newWidth = Math.max(dragState.pixelsPerDay > 0 ? dragState.pixelsPerDay : 1, dragState.originalWidth - deltaX);
         displayX = dragState.originalX + (dragState.originalWidth - newWidth);
         displayWidth = newWidth;
       }
@@ -151,7 +236,7 @@ const GanttChart: React.FC<GanttChartProps> = ({ tasks, projectInfo, onUpdateTas
           height={height}
           fill={fill}
           onMouseDown={(e) => handleMouseDown(e, 'move')}
-          style={{ cursor: 'grab' }}
+          style={{ cursor: dragState?.taskId === payload.id ? 'grabbing' : 'grab' }}
           rx="2"
           ry="2"
         />
@@ -181,34 +266,31 @@ const GanttChart: React.FC<GanttChartProps> = ({ tasks, projectInfo, onUpdateTas
   const CustomTooltip = ({ active, payload, label }: any) => {
     if (active && payload && payload.length) {
       const data = payload[0].payload;
-      const start = data.timeline[0];
-      const end = data.timeline[1];
-      const duration = end - start;
       return (
         <div className="bg-slate-900 p-3 border border-slate-700 rounded-md shadow-lg">
           <p className="font-bold text-slate-100">{`${label}`}</p>
           <p className="text-sm text-slate-400">{`Status: ${data.status}`}</p>
-          <p className="text-sm text-slate-400">{`Starts on Day ${start}`}</p>
-          <p className="text-sm text-slate-400">{`Duration: ${duration} day(s)`}</p>
+          <p className="text-sm text-slate-400">{`Dates: ${data.startDate} to ${data.endDate}`}</p>
         </div>
       );
     }
     return null;
   };
+
+  const margin = { top: 5, right: 30, left: 100, bottom: 5 };
   
   return (
     <div className="bg-slate-800 p-6 rounded-lg shadow-md select-none">
       <h2 className="text-xl font-bold text-slate-100 mb-4 border-b border-slate-700 pb-2">Project Timeline</h2>
-      <div style={{ width: '100%', height: tasks.length * 50 + 60, minHeight: 300 }}>
+      <div ref={containerRef} style={{ position: 'relative', width: '100%', height: tasks.length * 50 + 60, minHeight: 300 }}>
         <ResponsiveContainer>
           <BarChart
             data={chartData}
             layout="vertical"
-            margin={{ top: 5, right: 30, left: 100, bottom: 5 }}
+            margin={margin}
             barCategoryGap="35%"
           >
             <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#334155" />
-            {/* Fix: Changed allowDecals to allowDecimals */}
             <XAxis type="number" domain={[0, projectDuration]} allowDecimals={false} label={{ value: 'Days Since Project Start', position: 'insideBottom', offset: -5, fill: '#94a3b8' }} tick={{ fill: '#94a3b8' }} />
             <YAxis type="category" dataKey="name" width={150} tick={{ fontSize: 12, fill: '#cbd5e1' }} interval={0} />
             <Tooltip content={<CustomTooltip />} cursor={{ fill: 'rgba(71, 85, 105, 0.5)' }} />
@@ -219,6 +301,15 @@ const GanttChart: React.FC<GanttChartProps> = ({ tasks, projectInfo, onUpdateTas
             </Bar>
           </BarChart>
         </ResponsiveContainer>
+         {containerWidth > 0 && tasks.length > 0 && (
+            <DependencyLines
+                tasks={tasks}
+                chartData={chartData}
+                projectInfo={projectInfo}
+                containerWidth={containerWidth}
+                margin={margin}
+            />
+        )}
       </div>
     </div>
   );

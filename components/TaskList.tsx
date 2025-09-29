@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
-import { Project, Task, Status } from '../types';
+import React, { useState, useMemo } from 'react';
+import { Project, Task, Status, Priority } from '../types';
 import TaskItem from './TaskItem';
 import { generateTaskSuggestions } from '../services/geminiService';
 import { AddIcon, SparklesIcon } from './icons/Icons';
+import { PRIORITY_ORDER } from '../constants';
 
 interface TaskListProps {
   tasks: Task[];
@@ -17,6 +18,7 @@ interface TaskListProps {
 const TaskList: React.FC<TaskListProps> = ({ tasks, projectInfo, setTasks, onEditTask, onDeleteTask, onUpdateTaskStatus, onAddTask }) => {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [sortBy, setSortBy] = useState<'default' | 'priority'>('default');
 
   const handleGenerateSuggestions = async () => {
     setIsLoading(true);
@@ -29,6 +31,7 @@ const TaskList: React.FC<TaskListProps> = ({ tasks, projectInfo, setTasks, onEdi
         description: suggestion.description || '',
         assignee: suggestion.assignee || 'Unassigned',
         status: Status.ToDo,
+        priority: Priority.Medium,
         startDate: suggestion.startDate || projectInfo.startDate,
         endDate: suggestion.endDate || projectInfo.endDate,
       }));
@@ -43,12 +46,37 @@ const TaskList: React.FC<TaskListProps> = ({ tasks, projectInfo, setTasks, onEdi
       setIsLoading(false);
     }
   };
+  
+  const sortedTasks = useMemo(() => {
+    const sortableTasks = [...tasks];
+    if (sortBy === 'priority') {
+      sortableTasks.sort((a, b) => {
+        const priorityA = PRIORITY_ORDER[a.priority || Priority.Medium];
+        const priorityB = PRIORITY_ORDER[b.priority || Priority.Medium];
+        return priorityB - priorityA; // Descending order (High to Low)
+      });
+    }
+    return sortableTasks;
+  }, [tasks, sortBy]);
+
 
   return (
     <div className="bg-slate-800 p-6 rounded-lg shadow-md">
       <div className="flex flex-wrap justify-between items-center mb-4 border-b border-slate-700 pb-2 gap-4">
         <h2 className="text-xl font-bold text-slate-100">Tasks</h2>
         <div className="flex items-center space-x-2">
+            <div>
+              <label htmlFor="sort-by" className="sr-only">Sort by</label>
+              <select
+                id="sort-by"
+                value={sortBy}
+                onChange={(e) => setSortBy(e.target.value as 'default' | 'priority')}
+                className="rounded-md bg-slate-700 border-slate-600 text-slate-200 text-sm focus:border-primary-500 focus:ring-primary-500"
+              >
+                <option value="default">Sort by Default</option>
+                <option value="priority">Sort by Priority</option>
+              </select>
+            </div>
            <button
             onClick={handleGenerateSuggestions}
             disabled={isLoading}
@@ -75,8 +103,8 @@ const TaskList: React.FC<TaskListProps> = ({ tasks, projectInfo, setTasks, onEdi
       </div>
       {error && <div className="text-red-400 bg-red-900/50 p-3 rounded-md mb-4">{error}</div>}
       <div className="space-y-3">
-        {tasks.length > 0 ? (
-          tasks.map(task => (
+        {sortedTasks.length > 0 ? (
+          sortedTasks.map(task => (
             <TaskItem 
               key={task.id} 
               task={task} 

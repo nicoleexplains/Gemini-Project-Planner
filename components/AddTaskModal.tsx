@@ -1,20 +1,25 @@
+
 import React, { useState, useEffect } from 'react';
-import { Task } from '../types';
+import { Task, Priority } from '../types';
+import { PRIORITY_OPTIONS } from '../constants';
 
 interface AddTaskModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSave: (task: Omit<Task, 'id' | 'status'>, id?: string) => void;
   task: Task | null;
+  tasks: Task[];
 }
 
-const AddTaskModal: React.FC<AddTaskModalProps> = ({ isOpen, onClose, onSave, task }) => {
+const AddTaskModal: React.FC<AddTaskModalProps> = ({ isOpen, onClose, onSave, task, tasks }) => {
   const [formData, setFormData] = useState({
     name: '',
     description: '',
     assignee: '',
     startDate: '',
     endDate: '',
+    priority: Priority.Medium,
+    dependencies: [] as string[],
   });
 
   useEffect(() => {
@@ -25,6 +30,8 @@ const AddTaskModal: React.FC<AddTaskModalProps> = ({ isOpen, onClose, onSave, ta
         assignee: task.assignee,
         startDate: task.startDate,
         endDate: task.endDate,
+        priority: task.priority || Priority.Medium,
+        dependencies: task.dependencies || [],
       });
     } else {
       setFormData({
@@ -33,13 +40,20 @@ const AddTaskModal: React.FC<AddTaskModalProps> = ({ isOpen, onClose, onSave, ta
         assignee: '',
         startDate: new Date().toISOString().split('T')[0],
         endDate: new Date().toISOString().split('T')[0],
+        priority: Priority.Medium,
+        dependencies: [],
       });
     }
   }, [task, isOpen]);
 
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
     const { name, value } = e.target;
     setFormData(prev => ({ ...prev, [name]: value }));
+  };
+  
+  const handleDependenciesChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const selectedIds = Array.from(e.target.selectedOptions, (option: HTMLOptionElement) => option.value);
+    setFormData(prev => ({ ...prev, dependencies: selectedIds }));
   };
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -64,9 +78,25 @@ const AddTaskModal: React.FC<AddTaskModalProps> = ({ isOpen, onClose, onSave, ta
                 <label htmlFor="description" className="block text-sm font-medium text-slate-300">Description</label>
                 <textarea name="description" id="description" rows={3} value={formData.description} onChange={handleChange} className="mt-1 block w-full rounded-md bg-slate-700 border-slate-600 text-slate-200 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm" />
               </div>
-              <div>
-                <label htmlFor="assignee" className="block text-sm font-medium text-slate-300">Assignee</label>
-                <input type="text" name="assignee" id="assignee" value={formData.assignee} onChange={handleChange} className="mt-1 block w-full rounded-md bg-slate-700 border-slate-600 text-slate-200 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm" />
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                    <label htmlFor="assignee" className="block text-sm font-medium text-slate-300">Assignee</label>
+                    <input type="text" name="assignee" id="assignee" value={formData.assignee} onChange={handleChange} className="mt-1 block w-full rounded-md bg-slate-700 border-slate-600 text-slate-200 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm" />
+                </div>
+                <div>
+                    <label htmlFor="priority" className="block text-sm font-medium text-slate-300">Priority</label>
+                    <select
+                        name="priority"
+                        id="priority"
+                        value={formData.priority}
+                        onChange={handleChange}
+                        className="mt-1 block w-full rounded-md bg-slate-700 border-slate-600 text-slate-200 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                    >
+                        {PRIORITY_OPTIONS.map(option => (
+                            <option key={option.value} value={option.value}>{option.label}</option>
+                        ))}
+                    </select>
+                </div>
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
@@ -77,6 +107,21 @@ const AddTaskModal: React.FC<AddTaskModalProps> = ({ isOpen, onClose, onSave, ta
                   <label htmlFor="endDate" className="block text-sm font-medium text-slate-300">End Date</label>
                   <input type="date" name="endDate" id="endDate" value={formData.endDate} onChange={handleChange} required className="mt-1 block w-full rounded-md bg-slate-700 border-slate-600 text-slate-200 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm" />
                 </div>
+              </div>
+               <div>
+                <label htmlFor="dependencies" className="block text-sm font-medium text-slate-300">Dependencies (Ctrl/Cmd + click to select multiple)</label>
+                <select
+                  multiple
+                  name="dependencies"
+                  id="dependencies"
+                  value={formData.dependencies}
+                  onChange={handleDependenciesChange}
+                  className="mt-1 block w-full h-24 rounded-md bg-slate-700 border-slate-600 text-slate-200 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                >
+                  {tasks.filter(t => t.id !== task?.id).map(potentialDep => (
+                    <option key={potentialDep.id} value={potentialDep.id}>{potentialDep.name}</option>
+                  ))}
+                </select>
               </div>
             </div>
           </div>
